@@ -85,6 +85,14 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- Cliente REST necesario para las pruebas de integración -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-restclient</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+
 		<!-- Pruebas de clientes HTTP: incluye soporte para TestRestTemplate -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -92,11 +100,12 @@
 			<scope>test</scope>
 		</dependency>
 
-        <!-- H2 para la ejecución de la aplicación y las pruebas -->
-        <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
-        </dependency>
+		<!-- H2: base de datos en memoria para pruebas -->
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<scope>test</scope>
+		</dependency>
 
 		<!-- Integración de Spring Boot con Testcontainers -->
 		<dependency>
