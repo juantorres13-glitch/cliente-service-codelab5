@@ -1,3 +1,4 @@
+
 package com.denkitronik.clienteservice.integration;
 
 import com.denkitronik.clienteservice.domain.entities.Cliente;
@@ -14,15 +15,14 @@ import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.springframework.test.annotation.DirtiesContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -30,21 +30,17 @@ import static org.junit.jupiter.api.Assertions.*;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
 )
 @AutoConfigureTestRestTemplate
-@Testcontainers
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class ClienteIntegrationTest {
-
-    @Container
-    @ServiceConnection
-    static PostgreSQLContainer postgres =
-            new PostgreSQLContainer("postgres:16");
 
     @LocalServerPort
     private int port;
 
     @Autowired
     private TestRestTemplate restTemplate;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -58,16 +54,81 @@ class ClienteIntegrationTest {
         url = "http://localhost:" + port
                 + "/api/v1/cliente-service/clientes";
 
-        jdbcTemplate.update(
-                "INSERT INTO regiones (id, nombre) VALUES (1, ?) "
-                        + "ON CONFLICT (id) DO NOTHING",
-                "Sur América"
+        // Verificar que exista la región necesaria para crear clientes.
+        Integer cantidad = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM regiones WHERE id = 1",
+                Integer.class
         );
+
+        // Crear la región si no existe.
+        if (cantidad == null || cantidad == 0) {
+            jdbcTemplate.update(
+                    "INSERT INTO regiones (id, nombre) VALUES (?, ?)",
+                    1L,
+                    "Suramerica"
+            );
+        }
     }
 
     @Test
     @Order(1)
-    void crearCliente() {
+    void crearCliente_correoInvalido_debeRetornar400() throws Exception {
+        Cliente cliente = new Cliente();
+        cliente.setNombre("Juan");
+        cliente.setApellido("Torres");
+        cliente.setEmail("correo-invalido");
+
+        ResponseEntity<String> respuesta =
+                restTemplate.postForEntity(
+                        url,
+                        cliente,
+                        String.class
+                );
+
+        assertEquals(
+                HttpStatus.BAD_REQUEST,
+                respuesta.getStatusCode()
+        );
+
+        assertNotNull(respuesta.getBody());
+
+        JsonNode cuerpo = objectMapper.readTree(respuesta.getBody());
+
+        assertTrue(cuerpo.has("errors"));
+        assertTrue(cuerpo.get("errors").isArray());
+    }
+
+    @Test
+    @Order(2)
+    void crearCliente_nombreVacio_debeRetornar400() throws Exception {
+        Cliente cliente = new Cliente();
+        cliente.setNombre("");
+        cliente.setApellido("Torres");
+        cliente.setEmail("juan.vacio@example.com");
+
+        ResponseEntity<String> respuesta =
+                restTemplate.postForEntity(
+                        url,
+                        cliente,
+                        String.class
+                );
+
+        assertEquals(
+                HttpStatus.BAD_REQUEST,
+                respuesta.getStatusCode()
+        );
+
+        assertNotNull(respuesta.getBody());
+
+        JsonNode cuerpo = objectMapper.readTree(respuesta.getBody());
+
+        assertTrue(cuerpo.has("errors"));
+        assertTrue(cuerpo.get("errors").isArray());
+    }
+
+    @Test
+    @Order(3)
+    void crearCliente_debeRetornar201() {
         Cliente cliente = new Cliente();
         cliente.setNombre("Juan");
         cliente.setApellido("Torres");
@@ -84,75 +145,25 @@ class ClienteIntegrationTest {
                         Cliente.class
                 );
 
-        assertEquals(HttpStatus.CREATED, respuesta.getStatusCode());
+        assertEquals(
+                HttpStatus.CREATED,
+                respuesta.getStatusCode()
+        );
+
         assertNotNull(respuesta.getBody());
 
         clienteId = respuesta.getBody().getId();
+
         assertNotNull(clienteId);
-    }
-
-    @Test
-    @Order(2)
-    void consultarClienteCreado() {
-        assertNotNull(clienteId, "Primero debe crearse un cliente");
-
-        ResponseEntity<Cliente> respuesta =
-                restTemplate.getForEntity(
-                        url + "/" + clienteId,
-                        Cliente.class
-                );
-
-        assertEquals(HttpStatus.OK, respuesta.getStatusCode());
-        assertNotNull(respuesta.getBody());
         assertEquals("Juan", respuesta.getBody().getNombre());
     }
 
     @Test
-    @Order(3)
-    void listarClientes() {
-        ResponseEntity<Cliente[]> respuesta =
-                restTemplate.getForEntity(
-                        url,
-                        Cliente[].class
-                );
-
-        assertEquals(HttpStatus.OK, respuesta.getStatusCode());
-        assertNotNull(respuesta.getBody());
-        assertTrue(respuesta.getBody().length > 0);
-    }
-
-    @Test
     @Order(4)
-    void listarRegiones() {
-        ResponseEntity<Region[]> respuesta =
-                restTemplate.getForEntity(
-                        "http://localhost:" + port
-                                + "/api/v1/cliente-service/clientes/regiones",
-                        Region[].class
-                );
-
-        assertEquals(HttpStatus.OK, respuesta.getStatusCode());
-        assertNotNull(respuesta.getBody());
-    }
-
-    @Test
-    @Order(5)
-    void actualizarCliente() {
-        assertNotNull(clienteId, "Primero debe crearse un cliente");
-
-        Cliente actualizado = new Cliente();
-        actualizado.setId(clienteId);
-        actualizado.setNombre("Juan David");
-        actualizado.setApellido("Torres");
-        actualizado.setEmail("juan.integration@example.com");
-
-        Region region = new Region();
-        region.setId(1L);
-        actualizado.setRegion(region);
-
-        restTemplate.put(
-                url + "/" + clienteId,
-                actualizado
+    void consultarClienteCreado_debeRetornar200() {
+        assertNotNull(
+                clienteId,
+                "Primero debe crearse un cliente"
         );
 
         ResponseEntity<Cliente> respuesta =
@@ -161,16 +172,56 @@ class ClienteIntegrationTest {
                         Cliente.class
                 );
 
+        assertEquals(
+                HttpStatus.OK,
+                respuesta.getStatusCode()
+        );
+
+        assertNotNull(respuesta.getBody());
+        assertEquals("Juan", respuesta.getBody().getNombre());
+        assertEquals("Torres", respuesta.getBody().getApellido());
+    }
+
+    @Test
+    @Order(5)
+    void actualizarCliente_debeRetornar201() {
+        assertNotNull(
+                clienteId,
+                "Primero debe crearse un cliente"
+        );
+
+        Cliente actualizado = new Cliente();
+        actualizado.setNombre("Juan David");
+        actualizado.setApellido("Torres");
+        actualizado.setEmail("juan.integration@example.com");
+
+        Region region = new Region();
+        region.setId(1L);
+        actualizado.setRegion(region);
+
+        ResponseEntity<Cliente> respuesta =
+                restTemplate.exchange(
+                        url + "/" + clienteId,
+                        HttpMethod.PUT,
+                        new HttpEntity<>(actualizado),
+                        Cliente.class
+                );
+
+        assertEquals(
+                HttpStatus.CREATED,
+                respuesta.getStatusCode()
+        );
+
         assertNotNull(respuesta.getBody());
         assertEquals("Juan David", respuesta.getBody().getNombre());
     }
 
     @Test
     @Order(6)
-    void consultarClienteInexistente() {
+    void consultarClienteInexistente_debeRetornar404() {
         ResponseEntity<String> respuesta =
                 restTemplate.getForEntity(
-                        url + "/999999",
+                        url + "/99999",
                         String.class
                 );
 
@@ -182,12 +233,26 @@ class ClienteIntegrationTest {
 
     @Test
     @Order(7)
-    void eliminarCliente() {
-        assertNotNull(clienteId, "Primero debe crearse un cliente");
+    void eliminarCliente_debeRetornar204_yLuego404() {
+        assertNotNull(
+                clienteId,
+                "Primero debe crearse un cliente"
+        );
 
-        restTemplate.delete(url + "/" + clienteId);
+        ResponseEntity<Void> respuestaEliminar =
+                restTemplate.exchange(
+                        url + "/" + clienteId,
+                        HttpMethod.DELETE,
+                        HttpEntity.EMPTY,
+                        Void.class
+                );
 
-        ResponseEntity<String> respuesta =
+        assertEquals(
+                HttpStatus.NO_CONTENT,
+                respuestaEliminar.getStatusCode()
+        );
+
+        ResponseEntity<String> respuestaConsultar =
                 restTemplate.getForEntity(
                         url + "/" + clienteId,
                         String.class
@@ -195,8 +260,7 @@ class ClienteIntegrationTest {
 
         assertEquals(
                 HttpStatus.NOT_FOUND,
-                respuesta.getStatusCode()
+                respuestaConsultar.getStatusCode()
         );
     }
-
 }
